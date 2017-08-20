@@ -1,13 +1,38 @@
 #!/data/data/com.termux/files/usr/bin/python3.6
 
+import math, sys
+
 #color attributes dictionary
 styles={
 'default': '00', 'normal': '00',
 'bold': '01', 'bright': '00',
-'underlined': '04',
-'flashing': '05',
-'reversed': '07', 'inverted': '07',
-'concealed': '08',
+'faint': '02', # not widely supported
+'italic': '03', # not widely supported
+'underlined': '04', 'underline': '04',
+'blink': '05', 'flashing': '05',
+'fastblink': '06', # not widely supported
+'reversed': '07', 'reverse': '07', 'image-negative': '07',
+'concealed': '08', 'conceal': '08', 'hidden': '08', # not widely supported
+'crossed-out': '09', # not widely supported
+'font0': '10', # font stuff
+'font1': '11', # .
+'font2': '12', # .
+'font3': '13', # .
+'font4': '14', # .
+'font5': '15', # .
+'font6': '16', # .
+'font7': '17', # .
+'font8': '18', # .
+'font9': '19', # font stuff
+'fraktur': '20', # hardly ever supported
+'not-bold': '21', 'bold-off': '21', 'underline-double': '21', # hardly supported
+'normal-color': '22', 'normal-intensity': '22',
+'not-italic': '23', 'not-fraktur': '23',
+'not-underlined': '24', 'no-underline': '24',
+'blink-off': '25', 'not-blinking': '25',
+'image-positive': '27',
+'reveal': '28', 'show': '28', 'conceal-off': '28',
+'not-crossed-out': '29',
 'black': '30',
 'red': '31',
 'green': '32',
@@ -16,6 +41,11 @@ styles={
 'purple': '35',
 'cyan': '36',
 'grey': '37',
+# 38: extended fg color:
+# 38;5;n or
+# 38;2;r;g;b
+# (n,r,g,b are uint8 nums)
+'normal-text-color': '39', 'normal-fg': '39',
 'blackbg': '40',
 'redbg': '41',
 'greenbg': '42',
@@ -24,6 +54,14 @@ styles={
 'purplebg': '45',
 'cyanbg': '46',
 'greybg': '47',
+# 48: extended bg color (like 38)
+'normal-background-color': '49', 'normal-bg': '49',
+'framed': '51',
+'encircled': '52',
+'overlined': '53',
+'not-framed': '54', 'not-encircled': '54',
+'not-overlined': '55',
+
 'dgrey': '90',
 'lred': '91',
 'lgreen': '92',
@@ -45,6 +83,8 @@ styles={
 #Set a char to seperate comments from important stuff
 soc='#'
 
+directansi='$'
+
 #Char between name and value
 #default: name <- value
 #inversed: value -> name
@@ -53,11 +93,47 @@ iassocOp='->'
 
 lscolors=""
 
+def similarstrings(faultykey:str, keylist:list):
+	# further improovements possible (e.g. using find())
+	la=len(faultykey)
+	score=[]
+	a=0.9
+	g=0.1
+	pivot=0.5
+	k=-(math.log((2*a*g-a)/(g-a))/(g*pivot))
+	for key in keylist:
+		#print(key)
+		cscore=0
+		lb=len(key)
+		lendiff=1-(abs(la-lb)/la)
+		if la>lb:
+			ml=lb
+		else:
+			ml=la
+		for i in range(0,ml):
+			if key[i]==faultykey[i]:
+				cscore+=1
+		cscore/=(ml+1)
+		# csi - charactaer score importance
+		csi=(a*g) / (a + (g-a)*math.exp(-1*k*g*cscore))
+		sc=csi*cscore+(1-csi)*lendiff
+		#print(key.ljust(25,'.')+':\t'+str(sc).strip()+'\t('+str(cscore).strip()+'*'+str(csi).strip()+' + ' +str(lendiff).strip()+'*'+str(1-csi).strip())
+		score.append(sc)
+	maxscore=max(score)
+	if maxscore>0.75:
+		return keylist[score.index(maxscore)]
+		#return score.index(maxscore)
+	else:
+		print("nothing found. best match:"+keylist[score.index(maxscore)]+" with "+str(maxscore)+" points")
+		return False
+
 f=open('theme.cfg','r')
 allLines=f.readlines()
 for line in allLines:
-	line=line.strip() #don't parse lines when not necessary
-	if (line.startswith(soc) == False):
+	line=line.strip()
+	
+	#don't parse lines when not necessary
+	if (line.startswith(soc) == False and line.strip()!=''):
 		line=line.split(soc)[0].strip() #we don't want comments
 		stylestr="" #start every line from scratch
 		skipline=False
@@ -71,12 +147,18 @@ for line in allLines:
 				names=line.split(iassocOp)[1].strip().split(' ')
 				values=line.split(iassocOp)[0].strip().split(' ')
 			for attr in values:
-				try:
-					stylestr+=styles[attr.strip().lower()]+';'
-				except KeyError:
-					print("Error: \""+attr.strip().lower()+"\" is not a valid key!")
-					print("I will skip this line.")
-					skipline=True
+				if (attr.startswith(directansi)==True):
+					stylestr+=attr[1:len(attr)]+';'
+				else:
+					try:
+						stylestr+=styles[attr.strip().lower()]+';'
+					except KeyError:
+						sys.stderr.write('\x1b\x1b[31;01mError: \x1b\x1b[01;33m\"'+attr.strip().lower()+"\" is not a valid key!")
+						si=similarstrings(attr.strip().lower(), list(styles.keys()))
+						if si!=False:
+							sys.stderr.write(" Did you mean \""+si+"\"?")
+						sys.stderr.write(" I will skip this line.\x1b\x1b[00m\n")
+						skipline=True
 			if (skipline==False):
 				stylestr=stylestr[0:(len(stylestr)-1)]
 				for name in names:
