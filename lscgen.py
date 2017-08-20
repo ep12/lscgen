@@ -153,7 +153,7 @@ for line in allLines:
 					try:
 						stylestr+=styles[attr.strip().lower()]+';'
 					except KeyError:
-						sys.stderr.write('\x1b\x1b[31;01mError: \x1b\x1b[01;33m\"'+attr.strip().lower()+"\" is not a valid key!")
+						sys.stderr.write('# \x1b\x1b[31;01mError: \x1b\x1b[01;33m\"'+attr.strip().lower()+"\" is not a valid key!")
 						si=similarstrings(attr.strip().lower(), list(styles.keys()))
 						if si!=False:
 							sys.stderr.write(" Did you mean \""+si+"\"?")
