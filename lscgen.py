@@ -1,16 +1,26 @@
 #!/data/data/com.termux/files/usr/bin/python3.6
+#↑ termux only
+##!/usr/bin/python
+#↑ normal environment
 
+version='0.1'
 import math, sys, argparse
 
 parser=argparse.ArgumentParser()
-parser.add_argument("-q","--quiet", help="Don't output errors", action="store_true", default=False)
-parser.add_argument("-v","--verbose", help="Be verbose", action="store_true", default=False)
-parser.add_argument("theme", default='theme.cfg')
+group = parser.add_mutually_exclusive_group()
+group.add_argument("-q","--quiet", help="Don't output errors", action="store_true", default=False)
+group.add_argument("-v","--verbose", help="Be verbose", action="store_true", default=False)
+parser.add_argument("--version", help="Show version", action="store_true", default=False)
+parser.add_argument("-t", "--theme", nargs=1 , help="Specify a theme. Default is \"theme.cfg\".", action="store", default='theme.cfg')
 parser.description="""
 {a}33;01mlscgen.py{a}00m\\n
 This script generates a dircolors-like output to be processed by the shell from a human-readable config file.\n
 """.format(a='\x1b\x1b[')
 args=parser.parse_args()
+
+if args.version==True:
+	print("You are running version {} of lscgen.py".format(version))
+	exit(0)
 
 #color attributes dictionary
 styles={
@@ -94,6 +104,7 @@ styles={
 soc='#'
 
 directansi='$'
+setuserstyle='+'
 
 #Char between name and value
 #default: name <- value
@@ -115,7 +126,10 @@ def similarstrings(faultykey:str, keylist:list):
 		#print(key)
 		cscore=0
 		lb=len(key)
-		lendiff=1-(abs(la-lb)/la)
+		try:
+			lendiff=1-(abs(la-lb)/la)
+		except ZeroDivisionError:
+			return False
 		if la>lb:
 			ml=lb
 		else:
@@ -138,12 +152,12 @@ def similarstrings(faultykey:str, keylist:list):
 		return False
 
 try:
-	f=open(args.theme,'r')
+	f=open(args.theme[0],'r')
 except FileNotFoundError:
 	exit(1)
 allLines=f.readlines()
-for line in allLines:
-	line=line.strip()
+for linenum in range(0,len(allLines)):
+	line=allLines[linenum].strip()
 	
 	#don't parse lines when not necessary
 	if (line.startswith(soc) == False and line.strip()!=''):
@@ -171,16 +185,26 @@ for line in allLines:
 						stylestr+=styles[attr.strip().lower()]+';'
 					except KeyError:
 						if args.quiet==False:
-							sys.stderr.write('# \x1b\x1b[31;01mError: \x1b\x1b[01;33m\"'+attr.strip().lower()+"\" is not a valid key!")
+							sys.stderr.write("# {csi}31;01mError: {csi}01;33m\"{attr}\" is not a valid key!".format(csi='\x1b\x1b[', attr=attr.strip().lower()))
 							si=similarstrings(attr.strip().lower(), list(styles.keys()))
 							if si!=False:
 								sys.stderr.write(" Did you mean \""+si+"\"?")
 							sys.stderr.write("\x1b\x1b[00m\n")
+							sys.stderr.write("line: {} in config file {}".format(linenum, args.theme))
 						#skipline=True
 			if (skipline==False):
 				stylestr=stylestr[0:(len(stylestr)-1)]
 				for name in names:
-					if (name.startswith('*')==True):
+					if name.startswith(setuserstyle)==True:
+						if args.verbose==True:
+							print("Adding custom style: \"{}\" with \"{}\"".format(name[1:len(name)], stylestr))
+							#print(styles)
+							try:
+								print(styles[name[1:len(name)]])
+							except:
+								sys.stderr.write("# {csi}31;01mError:{csi}33;01m Could not append key to dictionary!{csi}00m\n".format(csi='\x1b\x1b['))
+						styles.update(styles.fromkeys([name[1:len(name)]], stylestr))
+					elif (name.startswith('*')==True):
 						lscolors+=name.strip()+'='+stylestr+':'
 					elif (name.startswith('\\')==True):
 						lscolors+=name[1:len(name)].strip()+'='+stylestr+':'
