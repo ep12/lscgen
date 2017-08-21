@@ -1,11 +1,21 @@
 #!/data/data/com.termux/files/usr/bin/python3.6
 
-import math, sys
+import math, sys, argparse
+
+parser=argparse.ArgumentParser()
+parser.add_argument("-q","--quiet", help="Don't output errors", action="store_true", default=False)
+parser.add_argument("-v","--verbose", help="Be verbose", action="store_true", default=False)
+parser.add_argument("theme", default='theme.cfg')
+parser.description="""
+{a}33;01mlscgen.py{a}00m\\n
+This script generates a dircolors-like output to be processed by the shell from a human-readable config file.\n
+""".format(a='\x1b\x1b[')
+args=parser.parse_args()
 
 #color attributes dictionary
 styles={
 'default': '00', 'normal': '00',
-'bold': '01', 'bright': '00',
+'bold': '01', 'bright': '01',
 'faint': '02', # not widely supported
 'italic': '03', # not widely supported
 'underlined': '04', 'underline': '04',
@@ -127,13 +137,18 @@ def similarstrings(faultykey:str, keylist:list):
 		print("nothing found. best match:"+keylist[score.index(maxscore)]+" with "+str(maxscore)+" points")
 		return False
 
-f=open('theme.cfg','r')
+try:
+	f=open(args.theme,'r')
+except FileNotFoundError:
+	exit(1)
 allLines=f.readlines()
 for line in allLines:
 	line=line.strip()
 	
 	#don't parse lines when not necessary
 	if (line.startswith(soc) == False and line.strip()!=''):
+		if len(line.split(soc))>1 and args.verbose==True:
+			print("skipping part {}".format(line.split(soc)[1]))
 		line=line.split(soc)[0].strip() #we don't want comments
 		stylestr="" #start every line from scratch
 		skipline=False
@@ -148,17 +163,20 @@ for line in allLines:
 				values=line.split(iassocOp)[0].strip().split(' ')
 			for attr in values:
 				if (attr.startswith(directansi)==True):
+					if args.verbose==True:
+						sys.stderr.write("Warning: using direct sequence \""+attr[1:len(attr)]+"\"\n")
 					stylestr+=attr[1:len(attr)]+';'
 				else:
 					try:
 						stylestr+=styles[attr.strip().lower()]+';'
 					except KeyError:
-						sys.stderr.write('# \x1b\x1b[31;01mError: \x1b\x1b[01;33m\"'+attr.strip().lower()+"\" is not a valid key!")
-						si=similarstrings(attr.strip().lower(), list(styles.keys()))
-						if si!=False:
-							sys.stderr.write(" Did you mean \""+si+"\"?")
-						sys.stderr.write(" I will skip this line.\x1b\x1b[00m\n")
-						skipline=True
+						if args.quiet==False:
+							sys.stderr.write('# \x1b\x1b[31;01mError: \x1b\x1b[01;33m\"'+attr.strip().lower()+"\" is not a valid key!")
+							si=similarstrings(attr.strip().lower(), list(styles.keys()))
+							if si!=False:
+								sys.stderr.write(" Did you mean \""+si+"\"?")
+							sys.stderr.write("\x1b\x1b[00m\n")
+						#skipline=True
 			if (skipline==False):
 				stylestr=stylestr[0:(len(stylestr)-1)]
 				for name in names:
@@ -170,7 +188,9 @@ for line in allLines:
 						lscolors+=name.strip()+'='+stylestr+':'
 					else:
 							lscolors+='*'+name.strip()+'='+stylestr+':'
+	elif args.verbose==True:
+		print("skipping line {}".format(line))
 lscolors=lscolors[0:(len(lscolors)-1)]
-print("LS_COLORS='" + lscolors + "'")
+print("LS_COLORS=\x27" + lscolors + "\x27;")
 print("export LS_COLORS")
 f.close()
