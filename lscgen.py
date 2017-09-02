@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 ##!/data/data/com.termux/files/usr/bin/python3.6
 #^ termux only
-#^ normal environment
 
 version='0.1'
 import math, sys, argparse
@@ -11,31 +10,83 @@ if sys.version_info[0] < 3:
     raise "Must be using Python 3"
     exit(1)
 
-#NEEDS TO BE REVIEWED AND IMPROOVED!
 parser=argparse.ArgumentParser()
-outputctrl = parser.add_mutually_exclusive_group()
-infoopt = parser.add_mutually_exclusive_group()
-reverseopt = infoopt.add_argument_group()
+parser.prog = "lscgen.py"
+parser.description = "Convert a theme for colored ls output to ANSI colors and vice versa."
 
-parser.add_argument("-t", "--theme", nargs=1 , help="Specify a theme. Default is \"theme.cfg\".", action="store", default='theme.cfg')
-
-outputctrl.add_argument("-q","--quiet", help="Don't output errors", action="store_true", default=False)
-outputctrl.add_argument("-v","--verbose", help="Be verbose", action="store_true", default=False)
-
-infoopt.add_argument("--version", help="Show version", action="store_true", default=False)
-infoopt.add_argument("-c", "--colors", "--color-help", dest="colors", action="store_true", default=False, help="Show available colors and syntax") 
-infoopt.add_argument("--test", help="Test your terminal. Usually not every control code is working properly", action="store_true", default=False) # not yet implemented
-infoopt.add_argument("-r","--reverse", help="Reverse the output to get a theme file", action="store_true", default=False)
-
-reverseopt.add_argument("-o", "--output", action="store", nargs=1, help="Output the theme file")
-reverseopt.add_argument("-i", "--input", action="store", nargs=1, help="File to reverse, if none given, I read from stdin until Ctrl-D")
-
-parser.description="""
-{a}33;01mlscgen.py{a}00m
-This script generates a dircolors-like output to be processed by the shell from a human-readable config file.
-""".format(a='\x1b[')
+parser.add_argument("action",
+					nargs=1,
+					default="normal",
+					type=str,
+					choices=["normal", "reverse", "test", "translate", "help"],
+					metavar="ACTION",
+					action="store",
+					help="Convert a theme to a executable output or reverse input to a config file"
+					)
+parser.add_argument("-i", "--input",
+					nargs=1,
+					default="",
+					dest="input",
+					type=str,
+					required=False,
+					metavar="FILE",
+					action="store",
+					help="Input file"
+					)
+parser.add_argument("-o", "--output",
+					nargs=1,
+					default="",
+					dest="output",
+					type=str,
+					required=False,
+					metavar="FILE",
+					action="store",
+					help="Output file"
+					)
+parser.add_argument("-v", "--verbose",
+					default=False,
+					dest="verbose",
+					required=False,
+					action="store_true",
+					help="Output errors and warnings"
+					)
+parser.add_argument("-t", "--translate",
+					default="default",
+					dest="text",
+					type=str,
+					required=False,
+					action="store",
+					help="list of attributes to translate"
+					)
 
 args=parser.parse_args()
+
+if len(args.action)>0 and type(args.action)==list:
+	action=args.action[0]
+else:
+	action="normal"
+	
+if len(args.input)>0:
+	inFile=args.input[0]
+else:
+	inFile=None
+	
+if len(args.output)>0:
+	outFile=args.output[0]
+else:
+	outFile=None
+
+verbose=args.verbose
+
+text=args.text
+
+soc='#' #          start of comment
+directansi='$' #   use direct ANSIS in theme files
+setuserstyle='+' # store a user-defined style
+
+#Char between name and value
+nassocOp='<-' #default: name <- value
+iassocOp='->' #inversed: value -> name
 
 #color attributes dictionary
 styles=OrderedDict([
@@ -114,31 +165,55 @@ styles=OrderedDict([
 ('whitebg', '107')
 ])
 
-#Set a char to seperate comments from important stuff
-soc='#'
+def throwError (text:str="Error", ex:bool=True):
+	if args.verbose==True:
+		msg="# \x1b[31;01mERROR  \x1b[00;01m [{pn}] \x1b[00m{t}\x1b[00m\n".format(pn=parser.prog, t=text)
+		sys.stderr.write(msg)
+	if ex:
+		exit(1)
 
-directansi='$'
-setuserstyle='+'
+def throwWarning (text:str="Warning"):
+	if args.verbose==True:
+		msg="# \x1b[33;01mWARNING\x1b[00;01m [{pn}] \x1b[00m{t}\x1b[00m\n".format(pn=parser.prog, t=text)
+		sys.stderr.write(msg)
 
-#Char between name and value
-#default: name <- value
-#inversed: value -> name
-nassocOp='<-'
-iassocOp='->'
+def info (text:str="Info"):
+	if args.verbose==True:
+		msg="# \x1b[34;01mINFO   \x1b[00;01m [{pn}] \x1b[00m{t}\x1b[00m\n".format(pn=parser.prog, t=text)
+		sys.stderr.write(msg)
 
-lscolors=""
+def readIn():
+	if inFile!=None:
+		try:
+			f=open(inFile)
+		except:
+			throwError("Could not open file \"{}\" (r)".format(inFile))
+		r=f.readlines()
+		f.close()
+		return r
+	else:
+		return sys.stdin.readlines()
 
-#why is this not working?
+def writeOut(value):
+	if value.endswith('\n')==False: value+='\n'
+	if outFile!=None:
+		try:
+			f=open(outFile,'w')
+		except:
+			throwError("Could not open file \"{}\" (w)".format(outFile))
+		f.writelines(value)
+		f.close()
+	else:
+		sys.stdout.write(value)
+
 def similarstrings (faultykey:str, keylist:list):
 	# further improovements possible (e.g. using find())
 	la=len(faultykey)
 	score=[]
-	a=0.9
-	g=0.1
+	a,g=0.9,0.1
 	pivot=0.5
 	k=-(math.log((2*a*g-a)/(g-a))/(g*pivot))
 	for key in keylist:
-		#print(key)
 		cscore=0
 		lb=len(key)
 		try:
@@ -150,129 +225,71 @@ def similarstrings (faultykey:str, keylist:list):
 		else:
 			ml=la
 		for i in range(0,ml):
-			if key[i]==faultykey[i]:
-				cscore+=1
+			if key[i]==faultykey[i]: cscore+=1
 		cscore/=(ml+1)
 		# csi - charactaer score importance
 		csi=(a*g) / (a + (g-a)*math.exp(-1*k*g*cscore))
 		sc=csi*cscore+(1-csi)*lendiff
-		#print(key.ljust(25,'.')+':\t'+str(sc).strip()+'\t('+str(cscore).strip()+'*'+str(csi).strip()+' + ' +str(lendiff).strip()+'*'+str(1-csi).strip())
 		score.append(sc)
 	maxscore=max(score)
-	if maxscore>0.75:
+	if maxscore>0.7:
 		return keylist[score.index(maxscore)]
-		#return score.index(maxscore)
 	else:
-		print("nothing found. best match:"+keylist[score.index(maxscore)]+" with "+str(maxscore)+" points")
+		throwError("No similar key found. Best match: "+keylist[score.index(maxscore)]+" with "+str(maxscore)+" points", False)
 		return False
 
-def attrToSeq (attributes:list):
+def attrsToSeq (attributes:list):
 	stylestr=""
 	for attr in attributes:
+		if attr.strip()=='': break
 		if (attr.startswith(directansi)==True):
-			if args.verbose==True:
-				sys.stderr.write("Warning: using direct sequence \""+attr[1:len(attr)]+"\"\n")
+			info("Using direct sequence \"{}\"".format(attr[1:len(attr)]))
 			stylestr+=attr[1:len(attr)]+';'
 		else:
 			try:
 				stylestr+=styles[attr.strip().lower()]+';'
 			except KeyError:
-				if args.quiet==False:
-					sys.stderr.write("# {csi}31;01mError: {csi}01;33m\"{attr}\" is not a valid key!".format(csi='\x1b[', attr=attr.strip().lower()))
-					si=similarstrings(attr.strip().lower(), list(styles.keys()))
-					if si!=False:
-						sys.stderr.write(" Did you mean \""+si+"\"?")
-					sys.stderr.write("\x1b[00m\n")
-					#sys.stderr.write("line: {} in config file {}".format(linenum, args.theme))
-				#skipline=True
-	return stylestr
+				throwError("{csi}01;33m\"{attr}\"{csi}01;31m is not a valid key!".format(csi='\x1b[', attr=attr.strip().lower()), False)
+				si=similarstrings(attr.strip().lower(), list(styles.keys()))
+				if si!=False:
+					throwError("Did you mean \"{}\"?".format(si), False)
+					#throwWarning("line: {} in config file {}".format(linenum, args.theme))
+	return stylestr[0:len(stylestr)-1]
 
 def themeToVar ():
-	if type(args.theme)==list:
-		try:
-			f=open(args.theme[0],'r')
-		except FileNotFoundError:
-			sys.stderr.write("# {csi}31;01mError: {csi}33;01mFile not found!{csi}00m\n".format('\x1b['))
-			exit(1)
-		if args.verbose==True:
-			print("Opening theme file\"{}\"".format(args.theme[0]))
-	else:
-		try:
-			f=open(args.theme,'r')
-		except FileNotFoundError:
-			sys.stderr.write("# {sci}31;01mError: {csi}33;01mFile not found!{csi}00m\n".format('\x1b['))
-			exit(1)
-		if args.verbose==True:
-			print("Opening theme file\"{}\"".format(args.theme))
+	allLines=readIn()
 	lscolors=""
-	allLines=f.readlines()
 	for linenum in range(0,len(allLines)):
 		line=allLines[linenum].strip()
-		#don't parse lines when not necessary
-		if (line.startswith(soc) == False and line.strip()!=''):
-			if len(line.split(soc))>1 and args.verbose==True:
-				print("skipping part {}".format(line.split(soc)[1]))
-			line=line.split(soc)[0].strip() #we don't want comments
-			stylestr=""
-			nsep=(line.find(nassocOp)!=-1)
-			isep=(line.find(iassocOp)!=-1)
+		if (line.startswith(soc) == False and line.strip()!=''): #don't parse lines when not necessary
+			#if len(line.split(soc))>1: info("skipping part {}".format(line.split(soc)[1]))
+			line=line.split(soc)[0].strip() # we don't want comments
+			stylestr=""; nsep=(line.find(nassocOp)!=-1); isep=(line.find(iassocOp)!=-1)
 			if (nsep+isep==1):
 				if (nsep==True):
-					names=line.split(nassocOp)[0].strip().split(' ')
-					values=line.split(nassocOp)[1].strip().split(' ')
+					names=line.split(nassocOp)[0].strip().split(' '); values=line.split(nassocOp)[1].strip().split(' ')
 				else:
-					names=line.split(iassocOp)[1].strip().split(' ')
-					values=line.split(iassocOp)[0].strip().split(' ')
-				stylestr=attrToSeq(values)
-				stylestr=stylestr[0:(len(stylestr)-1)]
+					names=line.split(iassocOp)[1].strip().split(' '); values=line.split(iassocOp)[0].strip().split(' ')
+				stylestr=attrsToSeq(values) ############################
 				for name in names:
 					if name.startswith(setuserstyle)==True:
-						if args.verbose==True:
-							print("Adding custom style: \"{}\" with \"{}\"".format(name[1:len(name)], stylestr))
-							#print(styles)
-							try:
-								print(styles[name[1:len(name)]])
-							except:
-								sys.stderr.write("# {csi}31;01mError:{csi}33;01m Could not append key to dictionary!{csi}00m\n".format(csi='\x1b['))
-						styles.update(styles.fromkeys([name[1:len(name)]], stylestr))
-					elif (name.startswith('*')==True):
-						lscolors+=name.strip()+'='+stylestr+':'
-					elif (name.startswith('\\')==True):
-						lscolors+=name[1:len(name)].strip()+'='+stylestr+':'
-					elif (name.startswith('.')==False):
-						lscolors+=name.strip()+'='+stylestr+':'
-					else:
-						lscolors+='*'+name.strip()+'='+stylestr+':'
-		elif args.verbose==True:
-			print("skipping line {}".format(line))
-	lscolors=lscolors[0:(len(lscolors)-1)]
-	print("LS_COLORS=\x27" + lscolors + "\x27;")
-	print("export LS_COLORS")
-	f.close()
-	return "LS_COLORS='{lsc}';\;export LS_COLORS".format(lsc=lscolors)
+						info("Adding custom style: \"{}\" {} \"{}\"".format(name[1:], nassocOp, stylestr))
+						try:
+							styles.update(styles.fromkeys([name[1:]], stylestr))
+							#print(styles[name[1:]])
+						except:
+							throwError("Could not append key to dictionary!".format(csi='\x1b['))
+					elif (name.startswith('*')==True): lscolors+=name.strip()+'='+stylestr+':'
+					elif (name.startswith('\\')==True): lscolors+=name[1:].strip()+'='+stylestr+':'
+					elif (name.startswith('.')==False): lscolors+=name.strip()+'='+stylestr+':'
+					else: lscolors+='*'+name.strip()+'='+stylestr+':'
+	#lscolors=lscolors[0:(len(lscolors)-1)]
+	#print("LS_COLORS=\x27" + lscolors + "\x27;")
+	#print("export LS_COLORS")
+	return "LS_COLORS='{lsc}';\nexport LS_COLORS".format(lsc=lscolors)
 
 def varToTheme ():
-	if args.input==None:
-		inp=sys.stdin.readlines()
-	else:
-		if type(args.input)==list:
-			try:
-				f=open(args.input[0],'r')
-			except FileNotFoundError:
-				sys.stderr.write("# {csi}31;01mError: {csi}33;01mFile not found!{csi}00m\n".format('\x1b['))
-				exit(1)
-			if args.verbose==True:
-				print("Opening var file\"{}\"".format(args.input[0]))
-		else:
-			try:
-				f=open(args.input,'r')
-			except FileNotFoundError:
-				sys.stderr.write("# {sci}31;01mError: {csi}33;01mFile not found!{csi}00m\n".format('\x1b['))
-				exit(1)
-			if args.verbose==True:
-				print("Opening var file\"{}\"".format(args.input))
-		inp=f.readlines()
-		f.close()
+	inp=readIn()
 	if len(inp)==2:
 		#hopefully dircolors output
 		var=inp[0][0:len(inp[0])-1]
@@ -280,20 +297,15 @@ def varToTheme ():
 		#maybe just the first line or even without LS_COLORS='
 		var=inp[0][0:len(inp[0])-1]
 	else:
-		print("I have no idea to parse your input...")
-		exit(1)
-	if var.startswith("LS_COLORS='"):
-		var=var[11:]
-	if var.endswith(":';"):
-		var=var[0:len(var)-3]
+		throwError("I have no idea to parse your input...")
+	if var.startswith("LS_COLORS='"): var=var[11:]
+	if var.endswith(":';"): var=var[0:len(var)-3]
 	lines=var.split(':')
-	names=[]
-	values=[]
+	names=[]; values=[]
 	for l in lines:
 		names.append(l.split('=')[0])
 		values.append(l.split('=')[1])
-	rvalues=[]
-	rnames=[]
+	rvalues=[]; rnames=[]
 	ind=0
 	for i in range(0, len(values)):
 		v=values[i]
@@ -304,10 +316,6 @@ def varToTheme ():
 			#not in rvalues array
 			rvalues.append(v)
 			rnames.append(names[i])
-	if args.verbose==True:
-		print(rnames)
-		print()
-		print(rvalues)
 	attrs=[]
 	for attrl in rvalues:
 		attr=attrl.split(';')
@@ -320,8 +328,7 @@ def varToTheme ():
 					attrstr+=list(styles.keys())[list(styles.values()).index('0'+a)]+" "
 				except ValueError:
 					#not in list!
-					if args.quiet==False:
-						sys.stderr.write("# {sci}31;01mError: {csi}33;01mAttribute not in list!{csi}00m\n".format('\x1b['))
+					throwError("Attribute not in list!\n")
 		attrstr=attrstr[0:len(attrstr)-1]
 		attrs.append(attrstr)
 	restored=[]
@@ -330,41 +337,11 @@ def varToTheme ():
 			restored.append("{val} {i} {names}".format(names=rnames[i], val=attrs[i], i=iassocOp, n=nassocOp))
 		else:
 			restored.insert(0,"{names} {n} {val}".format(names=rnames[i], val=attrs[i], i=iassocOp, n=nassocOp))
-	if args.output==None:
-		for l in restored:
-			print(l)
-	else:
-		if type(args.output)==list:
-			try:
-				f=open(args.output[0],'w')
-			except FileNotFoundError:
-				sys.stderr.write("# {csi}31;01mError: {csi}33;01mFile not found!{csi}00m\n".format('\x1b['))
-				exit(1)
-			if args.verbose==True:
-				print("Opening var file\"{}\"".format(args.output[0]))
-		else:
-			try:
-				f=open(args.output,'w')
-			except FileNotFoundError:
-				sys.stderr.write("# {sci}31;01mError: {csi}33;01mFile not found!{csi}00m\n".format('\x1b['))
-				exit(1)
-			if args.verbose==True:
-				print("Opening var file\"{}\"".format(args.output))
-		try:
-			f.writelines(line+'\n' for line in restored)
-			f.close()
-		except:
-			f.close()
-			if args.quiet==False:
-				sys.stderr.write("# {sci}31;01mError: {csi}33;01mFile not writable!{csi}00m\n".format('\x1b['))
-				exit(1)
-	return 
+	return "\n".join(restored)
 	
-if  args.reverse==True:
-	varToTheme()
-	exit(0)
 
-if args.test==True:
+def test():
+	r=""
 	attrsdone=[]
 	for i in range(0,len(list(styles.keys()))):
 		v=list(styles.values())[i]
@@ -372,16 +349,12 @@ if args.test==True:
 			ind=attrsdone.index(v)
 		except ValueError:
 			n=list(styles.keys())[i]
-			print("{n}: {csi}{v}mThis is a test.{csi}00m".format(n=n.ljust(25, "."), v=v, csi='\x1b['))
+			r+="{n}: {csi}{v}mThis is a test.{csi}00m\n".format(n=n.ljust(25, "."), v=v, csi='\x1b[')
 			attrsdone.append(v)
-	exit(0)
+	return r
 	
-if args.version==True:
-	print("You are running version {} of lscgen.py".format(version))
-	exit(0)
-
-if args.colors==True:
-	print("""
+def help():
+	return """
 {csi}107;30;05mBASIC SYNTAX{csi}00m:
 name name name {normaldirection} value value value # comment
 value value value {inversedirection} name name name # comment
@@ -409,8 +382,12 @@ not-overlined
 not-bold/bold-off/underline-double		normal-color/normal-intensity
 not-underlined/no-underline			blink-off/not-blinking
 reveal/show/conceal-off				not-crossed-out	
-""".format(normaldirection=nassocOp, inversedirection=iassocOp, csi='\x1b['))
-	exit(0)
-	
-defaultconvert=themeToVar()
+""".format(normaldirection=nassocOp, inversedirection=iassocOp, csi='\x1b[')
+
+if action=='normal': writeOut(themeToVar())
+if action=='reverse': writeOut(varToTheme())
+if action=='test': writeOut(test())
+if action=='translate': writeOut(attrsToSeq(text.split(' ')))
+if action=='help': writeOut(help())
+
 exit(0)
